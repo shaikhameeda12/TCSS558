@@ -4,17 +4,25 @@
  * and open the template in the editor.
  */
 package genericnode;
+
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.io.IOException;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
 import java.net.UnknownHostException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.ArrayList;
+import java.util.Map;
 import java.io.IOException;
 import java.sql.Blob;
 import java.util.AbstractMap.SimpleEntry;
@@ -29,36 +37,34 @@ import java.util.AbstractMap.SimpleEntry;
  *
  * @author wlloyd
  */
-public class GenericNode 
-{
+public class GenericNode {
     /**
      * @param args the command line arguments
      */
+
+    static final Map<String, String> dataMap = new ConcurrentHashMap<>();
+    // private static final AtomicBoolean isShutdown = new AtomicBoolean(false);
+    private volatile static boolean isShutdownRequested = false;
+
     public static void main(String[] args) throws IOException {
 
-        if (args.length > 0)
-        {
-            if (args[0].equals("rmis"))
-            {
+        if (args.length > 0) {
+            if (args[0].equals("rmis")) {
                 System.out.println("RMI SERVER");
-                try
-                {
+                try {
                     // insert code to start RMI Server
-                }
-                catch (Exception e)
-                {
+                } catch (Exception e) {
                     System.out.println("Error initializing RMI server.");
                     e.printStackTrace();
                 }
             }
-            if (args[0].equals("rmic"))
-            {
+            if (args[0].equals("rmic")) {
                 System.out.println("RMI CLIENT");
                 String addr = args[1];
                 String cmd = args[2];
                 String key = (args.length > 3) ? args[3] : "";
                 String val = (args.length > 4) ? args[4] : "";
-                // insert code to make RMI client request 
+                // insert code to make RMI client request
             }
                     //TCP CLIENT
             if (args[0].equals("tc")) {
@@ -232,6 +238,9 @@ public class GenericNode
             if (args[0].equals("uc"))
             {
                 System.out.println("UDP CLIENT");
+
+            if (args[0].equals("uc")) {
+                // System.out.println("UDP CLIENT");
                 String addr = args[1];
                 int sendport = Integer.parseInt(args[2]);
                 int recvport = sendport + 1;
@@ -240,34 +249,195 @@ public class GenericNode
                 String val = (args.length > 5) ? args[5] : "";
                 SimpleEntry<String, String> se = new SimpleEntry<String, String>(key, val);
                 // insert code to make UDP client request to server at addr:send/recvport
+
+                try (DatagramSocket clientSocket = new DatagramSocket();) {
+                    InetAddress serverAddress = InetAddress.getByName(addr);
+                    String reqData = cmd + " " + key + " " + val;
+                    byte[] sendData = reqData.getBytes();
+                    DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, serverAddress, sendport);
+                    clientSocket.send(sendPacket);
+
+                    byte[] receiveData = new byte[1024];
+                    DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
+                    clientSocket.receive(receivePacket);
+                    String received = new String(receivePacket.getData(), 0, receivePacket.getLength());
+                    System.out.println("server response:" + received);
+                    clientSocket.close();
+                }
+
             }
-            if (args[0].equals("us"))
-            {
+            if (args[0].equals("us")) {
                 System.out.println("UDP SERVER");
                 int port = Integer.parseInt(args[1]);
                 // insert code to start UDP server on port
+                try (DatagramSocket serverReceiverSocket = new DatagramSocket(port);
+                        DatagramSocket serverSenderSocket = new DatagramSocket(port + 1);) {
+
+                    // System.out.println("UDP Server started on port " + port);
+                    ExecutorService executorService = Executors.newCachedThreadPool();
+
+                    Thread receiverThread = new Thread(() -> {
+                        try {
+
+                            while (!isShutdownRequested) {
+                                byte[] receiveData = new byte[1024];
+                                DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
+                                try {
+                                    serverReceiverSocket.receive(receivePacket);
+                                } catch (SocketException e) {
+                                    if (isShutdownRequested) {
+                                        break; // Break out of the loop if shutdown is requested
+                                    } else {
+                                        e.printStackTrace();
+                                    }
+                                }
+
+                                executorService.submit(
+                                        new UDPHandler(serverReceiverSocket, receivePacket, serverSenderSocket));
+
+                            }
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    });
+
+                    receiverThread.start();
+
+                    while (true) {
+                        // Check if shutdown is requested
+                        if (isShutdownRequested) {
+                            // Close the sockets and shut down the executor service
+                            serverReceiverSocket.close();
+                            serverSenderSocket.close();
+                            executorService.shutdown();
+
+                            receiverThread.interrupt();
+                            try {
+                                receiverThread.join();
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            }
+                            
+                            break;
+                        }
+                    }
+
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+
             }
 
-        }
-        else
-        {
+        } else {
             String msg = "GenericNode Usage:\n\n" +
-                         "Client:\n" +
-                         "uc/tc <address> <port> put <key> <msg>  UDP/TCP CLIENT: Put an object into store\n" + 
-                         "uc/tc <address> <port> get <key>  UDP/TCP CLIENT: Get an object from store by key\n" + 
-                         "uc/tc <address> <port> del <key>  UDP/TCP CLIENT: Delete an object from store by key\n" + 
-                         "uc/tc <address> <port> store  UDP/TCP CLIENT: Display object store\n" + 
-                         "uc/tc <address> <port> exit  UDP/TCP CLIENT: Shutdown server\n" + 
-                         "rmic <address> put <key> <msg>  RMI CLIENT: Put an object into store\n" + 
-                         "rmic <address> get <key>  RMI CLIENT: Get an object from store by key\n" + 
-                         "rmic <address> del <key>  RMI CLIENT: Delete an object from store by key\n" + 
-                         "rmic <address> store  RMI CLIENT: Display object store\n" + 
-                         "rmic <address> exit  RMI CLIENT: Shutdown server\n\n" + 
-                         "Server:\n" +
-                         "us/ts <port>  UDP/TCP SERVER: run udp or tcp server on <port>.\n" +
-                         "rmis  run RMI Server.\n";
+                    "Client:\n" +
+                    "uc/tc <address> <port> put <key> <msg>  UDP/TCP CLIENT: Put an object into store\n" +
+                    "uc/tc <address> <port> get <key>  UDP/TCP CLIENT: Get an object from store by key\n" +
+                    "uc/tc <address> <port> del <key>  UDP/TCP CLIENT: Delete an object from store by key\n" +
+                    "uc/tc <address> <port> store  UDP/TCP CLIENT: Display object store\n" +
+                    "uc/tc <address> <port> exit  UDP/TCP CLIENT: Shutdown server\n" +
+                    "rmic <address> put <key> <msg>  RMI CLIENT: Put an object into store\n" +
+                    "rmic <address> get <key>  RMI CLIENT: Get an object from store by key\n" +
+                    "rmic <address> del <key>  RMI CLIENT: Delete an object from store by key\n" +
+                    "rmic <address> store  RMI CLIENT: Display object store\n" +
+                    "rmic <address> exit  RMI CLIENT: Shutdown server\n\n" +
+                    "Server:\n" +
+                    "us/ts <port>  UDP/TCP SERVER: run udp or tcp server on <port>.\n" +
+                    "rmis  run RMI Server.\n";
             System.out.println(msg);
         }
     }
+    }
+
+    // Method for safely shutting down the server
+    public static void initiateShutdown() {
+        isShutdownRequested = true;
+    }
+
 }
-//this is working fine 
+// this is working fine
+
+class UDPHandler implements Runnable {
+    private DatagramSocket receiverSocket;
+    private DatagramSocket senderSocket;
+    private DatagramPacket receivePacket;
+
+    public UDPHandler(DatagramSocket receiverSocket, DatagramPacket packet, DatagramSocket senderSocket) {
+        this.receiverSocket = receiverSocket;
+        this.senderSocket = senderSocket;
+        this.receivePacket = packet;
+    }
+
+    @Override
+    public void run() {
+        try {
+            // Process the received data as needed
+            String received = new String(receivePacket.getData(), 0, receivePacket.getLength());
+            String msg[] = received.split(" ");
+
+            String cmd = msg[0];
+            String key = (msg.length > 1) ? msg[1] : "";
+            String value = (msg.length > 2) ? msg[2] : "";
+
+            byte[] sendData;
+            DatagramPacket sendPacket;
+            InetAddress clientAddress = receivePacket.getAddress();
+            int clientPort = receivePacket.getPort();
+
+            String response;
+
+            switch (cmd) {
+                case "put":
+                    GenericNode.dataMap.put(key, value);
+                    response = "put key=" + key;
+                    sendData = response.getBytes();
+                    sendPacket = new DatagramPacket(sendData, sendData.length, clientAddress, clientPort);
+                    senderSocket.send(sendPacket);
+                    break;
+                case "get":
+                    String getValue = GenericNode.dataMap.get(key);
+                    response = "get key=" + key + " get val=" + getValue;
+                    sendData = response.getBytes();
+                    sendPacket = new DatagramPacket(sendData, sendData.length, clientAddress, clientPort);
+                    senderSocket.send(sendPacket);
+                    break;
+                case "del":
+                    GenericNode.dataMap.remove(key);
+                    response = "delete key=" + key;
+                    sendData = response.getBytes();
+                    sendPacket = new DatagramPacket(sendData, sendData.length, clientAddress, clientPort);
+                    senderSocket.send(sendPacket);
+                    break;
+                case "store":
+                    StringBuilder resultBuilder = new StringBuilder();
+                    GenericNode.dataMap.forEach((k, v) -> {
+                        resultBuilder.append("\nkey:").append(k).append(":value:").append(v).append(":");
+                    });
+                    response = resultBuilder.toString();
+                    if (response.length() > 65000) {
+                        // Truncate the output and prepend "TRIMMED:"
+                        response = "\nTRIMMED:" + response.substring(0, 65000);
+                    }
+                    sendData = response.getBytes();
+                    sendPacket = new DatagramPacket(sendData, sendData.length, clientAddress, clientPort);
+                    senderSocket.send(sendPacket);
+                    break;
+                case "exit":
+                    response = "Server Shutting Down....";
+                    sendData = response.getBytes();
+                    sendPacket = new DatagramPacket(sendData, sendData.length, clientAddress, clientPort);
+                    senderSocket.send(sendPacket);
+
+                    GenericNode.initiateShutdown();
+                    System.out.println("Server Shutting Down....");
+                    return;
+
+                default:
+                    break;
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
