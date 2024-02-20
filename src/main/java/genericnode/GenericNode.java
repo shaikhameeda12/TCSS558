@@ -18,6 +18,12 @@ import java.util.ArrayList;
 import java.io.IOException;
 import java.sql.Blob;
 import java.util.AbstractMap.SimpleEntry;
+import java.util.Arrays;
+import java.util.stream.Collectors;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.AbstractMap.SimpleEntry;
 
 /**
  *
@@ -54,186 +60,175 @@ public class GenericNode
                 String val = (args.length > 4) ? args[4] : "";
                 // insert code to make RMI client request 
             }
-            if (args[0].equals("tc"))
-            {
-                System.out.println("TCP CLIENT");
+                    //TCP CLIENT
+            if (args[0].equals("tc")) {
                 String addr = args[1];
                 int port = Integer.parseInt(args[2]);
-                String cmd = args[3];
-                String key = (args.length > 4) ? args[4] : "";
-                String val = (args.length > 5) ? args[5] : "";
-                SimpleEntry<String, String> se = new SimpleEntry<String, String>(key, val);
-                // insert code to make TCP client request to server at addr:port
-                // insert code to make TCP client request to server at addr:port
+                String command = Arrays.stream(args).skip(3).collect(Collectors.joining(" "));
+
                 try (Socket socket = new Socket(addr, port);
-                PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
-                BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                BufferedReader stdIn = new BufferedReader(new InputStreamReader(System.in))) {
+                        PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+                        BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
 
-                System.out.println("Connected to the server. Enter commands:");
+                    out.println(command); // Send the command to the server
+                    out.flush();
+                    String trimmed_command = command.trim();
+                    String response;
+                    if(trimmed_command.equals("store")) {
+                        System.out.print("server response:");
+                        while((response = in.readLine()) != null){
+                            System.out.println(response);
+                        }
 
-                String userInput;
-                while ((userInput = stdIn.readLine()) != null && !userInput.equalsIgnoreCase("exit")) {
-                long startTime = System.currentTimeMillis();
-                out.println(userInput);
-                String response = in.readLine();
-                long stopTime = System.currentTimeMillis();
-                long elapsedTime = stopTime - startTime;
-        
-                System.out.println("Server response: " + response);
-                System.out.println("Round trip response time: " + elapsedTime + " ms");
+                    }else{
+                        response = in.readLine();
+                        System.out.println("server response:"+response);
 
-        // Exit the loop and close the client if the server is shutting down
-                if ("Server shutting down.".equals(response)) {
-                break;
+                    }
+                } catch (UnknownHostException e) {
+                    System.err.println("Don't know about host " + addr);
+                    System.exit(1);
+                } catch (IOException e) {
+                    System.err.println("Couldn't get I/O for the connection to " + addr);
+                    System.exit(1);
+                }
             }
-        }
-    } 
-                catch (UnknownHostException e) 
-        {
-                System.err.println("Don't know about host " + addr);
-                System.exit(1);
-         }       
-         catch (IOException e) 
-         {
-                System.err.println("Couldn't get I/O for the connection to " + addr);
-                System.exit(1);
-         }
-            }
-
-
-            if (args[0].equals("ts"))
-            {
+            if (args[0].equals("ts")) {
                 System.out.println("TCP SERVER");
                 int port = Integer.parseInt(args[1]);
                 // insert code to start TCP server on port
-                // insert code to start TCP server on port
                 ExecutorService clientHandlingExecutor = Executors.newCachedThreadPool();
-                
                 ConcurrentHashMap<String, String> keyValueStore = new ConcurrentHashMap<>();
-                ArrayList<Long> responseTimes = new ArrayList<>();
                 try (ServerSocket serverSocket = new ServerSocket(port)) {
-                System.out.println("TCP Server started on port " + port);
+                    System.out.println("TCP Server started on port " + port);
+                    while (true) {
+                        Socket clientSocket = serverSocket.accept();
+                        clientHandlingExecutor.execute(() -> {
+                            try (
+                                PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true);
+                                BufferedReader in = new BufferedReader(
+                                            new InputStreamReader(clientSocket.getInputStream()));
+                                            ) {
+                                String inputLine =  in.readLine();
+                                // System.out.println("Received from client: "+inputLine);
+                                // long startTime = System.nanoTime();
+                                String[] tokens = inputLine.split(" ");
+                                String command = tokens[0].toLowerCase();
+                                // System.out.println("Command givven: "+command);
+                                String key;
+                                String value;
+                                String response = "";
 
-                while (true) {
-                Socket clientSocket = serverSocket.accept();
-                clientHandlingExecutor.execute(() -> {
-                try (PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true);
-                        BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()))) {
-                        String inputLine;
-                        while ((inputLine = in.readLine()) != null) {
-                long startTime = System.nanoTime();
-                String[] tokens = inputLine.split(" ");
-                String command = tokens[0].toLowerCase();
-                String key;
-                String value;
-                String response = "";
+                                switch (command) {
+                                    case "put":
+                                        if (tokens.length == 3) {
+                                            key = tokens[1];
+                                            value = tokens[2];
+                                            keyValueStore.put(key, value);
+                                            response = "put key=" + key;
+                                            out.println(response); // Make sure this line is there
+                                        } else {
+                                            response = "Error: Invalid usage of put command.";
+                                            out.println(response); // Make sure this line is there
+                                        }
+                                        break;
+                                    case "get":
+                                        if (tokens.length == 2) {
+                                            key = tokens[1];
+                                            value = keyValueStore.get(key); // Use get() to retrieve the value
+                                            if (value != null) {
+                                                // If the key exists, format the response with both key and value
+                                                response = "get key=" + key + " get val=" + value;
+                                            } else {
+                                                // If the key does not exist, return an error message
+                                                response = "Error: Key not found.";
+                                                
+                                            }
+                                        } else {
+                                            response = "Error: Invalid usage of get command.";
+                                        }
+                                        out.println(response);
+                                        break;
+                                    case "del":
+                                        if (tokens.length == 2) {
+                                            key = tokens[1];
+                                            // Check if the key exists before attempting to remove it.
+                                            if (keyValueStore.containsKey(key)) {
+                                                keyValueStore.remove(key);
+                                                // If the key exists and is removed, format the response.
+                                                response = "delete key=" + key;
+                                            } else {
+                                                // If the key does not exist, return an error message.
+                                                response = "Error: Key not found.";
+                                            }
+                                        } 
+                                        else 
+                                        {
+                                            response = "Error: Invalid usage of del command.";
+                                        }
+                                        out.println(response);
+                                        break;
+                                    case "store":
+                                        //System.out.println("Gets into store");
+                                        StringBuilder sb = new StringBuilder();
+                                        keyValueStore.forEach((k, v) -> sb.append("\nkey:").append(k).append(":value:").append(v).append(":"));
+                                        response = sb.toString();
+                                        //System.out.println("Store result: " + response);
+                                        if (sb.length() > 65000) 
+                                        {
+                                            response = "TRIMMED:\n" + sb.substring(0, 65000);
+                                        } else 
+                                        {
+                                            response = sb.toString();
+                                        }
+                                        out.println(response); // Send the response to the client
+                                        out.flush(); // Ensure the response is sent immediately
+                                        break;
 
-                switch (command) {
-                    case "put":
-                        if (tokens.length == 3) {
-                            key = tokens[1];
-                            value = tokens[2];
-                            keyValueStore.put(key, value);
-                            response = "put key=" + key; ;
-                        } else {
-                            response = "Error: Invalid usage of put command.";
-                        }
-                        break;
-                    case "get":
-                            if (tokens.length == 2) {
-                            key = tokens[1];
-                            value = keyValueStore.get(key); // Use get() to retrieve the value
-                            if (value != null) {
-                         // If the key exists, format the response with both key and value
-                            response = "get key=" + key + " get val=" + value;
-                            } else {
-                        // If the key does not exist, return an error message
-                            response = "Error: Key not found.";
+                                    case "exit":
+                                        response = "Server shutting down.";
+                                        out.println(response);
+                                        System.out.println(response);
+                                        try
+                                        {
+                                        serverSocket.close();
+                                        }
+                                        catch (IOException e)
+                                        {
+                                            System.err.println("Error closing server socket: " + e.getMessage());
+                                        }
+                                        return; // Exit the server loop and shut down
+                                    default:
+                                        response = "Error: Unknown command.";
+                                        break;
+                                }
+
+                            } 
+                            catch (IOException e) 
+                            {
+                                System.out.println("Exception caught when trying to listen on port " + port
+                                        + " or listening for a connection");
+                                System.out.println(e.getMessage());
+                                // Break the loop, stop the server
+                            } 
+                            finally 
+                            {
+                                try {
+                                    clientSocket.close();
+                                    //clientHandlingExecutor.shutdown();
+                                }
+
+                                catch (IOException e) 
+                                {
+                                    System.out.println("could not close client socket");
+                                    e.printStackTrace();
+                                }
                             }
-                            } else {
-                            response = "Error: Invalid usage of get command.";
-                             }
-                            break;
-                    case "del":
-                    if (tokens.length == 2) {
-                        key = tokens[1];
-                        // Check if the key exists before attempting to remove it.
-                    if (keyValueStore.containsKey(key)) {
-                         keyValueStore.remove(key);
-                        // If the key exists and is removed, format the response.
-                        response = "delete key=" + key;
-                        } else {
-                        // If the key does not exist, return an error message.
-                        response = "Error: Key not found.";
-                        }
-                        } else {
-                        response = "Error: Invalid usage of del command.";
-                        }
-                        break;
-                    case "store":
-                        StringBuilder sb = new StringBuilder();
-                        keyValueStore.forEach((k, v) -> sb.append(k).append("=").append(v).append("\n"));
-                        response = sb.toString();
-                        break;
-                    case "exit":
-                        response = "Server shutting down.";
-                        out.println(response);
-                        serverSocket.close();
-                        return; // Exit the server loop and shut down
-                    default:
-                        response = "Error: Unknown command.";
-                        break;
-                }
-
-                long endTime = System.nanoTime();
-                long duration = endTime - startTime;
-                responseTimes.add(duration);
-
-                // Calculate the average response time
-                double averageResponseTime = responseTimes.stream()
-                        .mapToLong(Long::longValue).average().orElse(Double.NaN);
-
-                out.println(response);
-                System.out.println("Average Response Time: " + averageResponseTime + "ns");
-            
-        } 
-        }
-              catch (IOException e) {
-                System.out.println("Exception caught when trying to listen on port " + port + " or listening for a connection");
-                System.out.println(e.getMessage());
-                 // Break the loop, stop the server
-        }
-        finally
-        {
-            try{
-                clientSocket.close();
-            }
-            
-            catch(IOException e)
-            {
-                System.out.println("could not close client socket");
-                e.printStackTrace();
-            }        
-            }
-          });
-                }
-                //try{
-
-               // }
-
-             // catch (IOException e) {
-              //  System.out.println("Could not listen on port " + port);
-               // e.printStackTrace();
-//}
+                        });
+                    }
+                    
                 }
             }
-        
-
-
-
-
-
             if (args[0].equals("uc"))
             {
                 System.out.println("UDP CLIENT");
@@ -273,6 +268,6 @@ public class GenericNode
                          "rmis  run RMI Server.\n";
             System.out.println(msg);
         }
-    }   
+    }
 }
 //this is working fine 
