@@ -1,12 +1,12 @@
 #!/bin/bash
 # Dummy jar file
-java -jar GenericNode.jar
+#java -jar GenericNode.jar
 
 #TCP Server
-java -jar GenericNode.jar ts 8080
+#java -jar GenericNode.jar ts 8080
 
 #UDP Server
-#java -jar GenericNode.jar us 1234
+java -jar GenericNode.jar us 1234
 
 #RMI Server
 #rmiregistry -J-Djava.class.path=GenericNode.jar &
